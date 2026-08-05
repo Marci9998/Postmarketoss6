@@ -28,11 +28,8 @@ jobs:
             patrones: "^samsung-j5y17lte$ ^samsung-j5y17 ^samsung-j5.*17"
             ui: "phosh"
             hostname: "galaxyj5"
-          - nombre: "Xiaomi Redmi 9A / 9AT"
-            device: "xiaomi-dandelion"
-            patrones: "^xiaomi-dandelion$ ^xiaomi-dandelion ^xiaomi-angelica"
-            ui: "phosh"
-            hostname: "redmi9a"
+          # El Xiaomi Redmi 9A / 9AT (dandelion) NO tiene puerto en postmarketOS:
+          # no aparece en pmaports, asi que no se puede construir una imagen.
 
     name: ${{ matrix.nombre }}
 
@@ -151,6 +148,10 @@ jobs:
           echo "dispositivo elegido: $DEV"
           echo "PMOS_DEVICE=$DEV" >> "$GITHUB_ENV"
 
+          echo "=== paquetes de firmware disponibles para $DEV ==="
+          ls "$APORTS/firmware" 2>/dev/null | grep -F "${DEV#*-}" || \
+            echo "(ninguno: puede que el firmware privativo no exista para este movil)"
+
       - name: Seleccionar dispositivo e interfaz grafica
         run: |
           set +e
@@ -190,19 +191,36 @@ jobs:
         run: |
           set +e
           set -x
-          # Distintas versiones aceptan distintos parametros: de mas a menos.
+          intentar() {
+            # Distintas versiones aceptan distintos parametros: de mas a menos.
+            for extra in "--split --filesystem ext4" "--split" ""; do
+              echo ">>> intentando: pmbootstrap install $extra"
+              # shellcheck disable=SC2086
+              pmbootstrap --details-to-stdout install $extra \
+                --password "$PMOS_PASSWORD" < "$ENTERS"
+              if [ $? -eq 0 ]; then
+                return 0
+              fi
+              echo ">>> fallo con: $extra"
+            done
+            return 1
+          }
+
           ok=0
-          for extra in "--split --filesystem ext4" "--split" ""; do
-            echo ">>> intentando: pmbootstrap install $extra"
-            # shellcheck disable=SC2086
-            pmbootstrap --details-to-stdout install $extra \
-              --password "$PMOS_PASSWORD" < "$ENTERS"
-            if [ $? -eq 0 ]; then
+          if intentar; then
+            ok=1
+          else
+            # Algunos moviles (p.ej. el Galaxy J5 2017) declaran un paquete de
+            # firmware privativo que no existe en los repositorios, y eso rompe
+            # la instalacion. Se reintenta sin firmware privativo.
+            echo ">>> reintento sin firmware privativo"
+            pmbootstrap config nonfree_firmware False || true
+            pmbootstrap config nonfree_userland False || true
+            pmbootstrap config
+            if intentar; then
               ok=1
-              break
             fi
-            echo ">>> fallo con: $extra"
-          done
+          fi
           df -h
           if [ "$ok" -ne 1 ]; then
             echo "ERROR: pmbootstrap install fallo con todas las variantes"

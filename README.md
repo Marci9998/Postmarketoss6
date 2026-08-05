@@ -1,4 +1,4 @@
-# postmarketOS para Samsung Galaxy S6, Galaxy J5 2017 y Redmi 9A
+# postmarketOS para Samsung Galaxy S6 y Galaxy J5 2017
 
 Este repositorio construye automáticamente imágenes de **postmarketOS** para
 estos móviles y las deja listas para descargar:
@@ -7,7 +7,12 @@ estos móviles y las deja listas para descargar:
 |---|---|---|
 | Samsung Galaxy S6 | SM-G920F | `samsung-zeroflte` |
 | Samsung Galaxy J5 (2017) | SM-J530F/DS | `samsung-j5y17lte` |
-| Xiaomi Redmi 9A / 9AT | M2006C3LG / M2006C3LI | `xiaomi-dandelion` |
+
+> **Xiaomi Redmi 9A / 9AT: no se puede.** postmarketOS no tiene soporte para
+> ese móvil. Su nombre en clave (`dandelion`) no existe en la lista de modelos
+> de postmarketOS, así que no hay nada que construir. Haría falta que alguien
+> creara el soporte desde cero, con el móvil delante, y eso no es algo que se
+> pueda generar automáticamente.
 
 No hace falta que instales nada en tu ordenador para *construirlas*: la
 construcción se hace sola en los servidores de GitHub.
@@ -49,9 +54,8 @@ cat *-root.img.xz.part-* > root.img.xz
 
 > ⚠️ **Aviso importante**: instalar esto borra TODO lo que haya en el teléfono
 > (fotos, WhatsApp, cuentas, todo). Haz copia de seguridad antes.
-> En los Samsung, además, activa el contador KNOX de forma **permanente** y
-> anula la garantía. En el Redmi hay que desbloquear el bootloader, que también
-> borra el móvil y requiere esperar unos días de permiso de Xiaomi.
+> Además, activa el contador KNOX de forma **permanente** y anula la
+> garantía.
 >
 > Hazlo solo si el móvil es viejo y no te importa perder lo que hay dentro.
 
@@ -96,42 +100,17 @@ Los dos Samsung se instalan igual, con un programa gratuito llamado
 
 ---
 
-## 4. Instalar en el Redmi 9A / 9AT
-
-El Redmi es distinto: usa **fastboot** (viene con las *platform-tools* de
-Android: https://developer.android.com/tools/releases/platform-tools).
-
-1. **Desbloquea el bootloader** con la herramienta oficial *Mi Unlock* de
-   Xiaomi. Hay que vincular la cuenta Mi al móvil y esperar el permiso
-   (normalmente unos días). Sin esto no se puede instalar nada.
-
-2. **Apaga el móvil y entra en fastboot**: mantén **Bajar volumen + Encendido**
-   hasta que salga el conejito de Android.
-
-3. **Conéctalo por USB e instálalo**:
-
-   ```bash
-   fastboot flash boot xiaomi-dandelion-boot.img
-   fastboot flash userdata xiaomi-dandelion-root.img
-   fastboot reboot
-   ```
-
-Si `fastboot devices` no muestra nada, prueba otro cable o instala los drivers
-USB de Xiaomi en Windows.
-
----
-
-## 5. Volver a Android
+## 4. Volver a Android
 
 Se puede volver a Android instalando el firmware original:
 
-- **Samsung**: con Odin o Heimdall, firmware de [SamMobile](https://www.sammobile.com/).
-  El contador KNOX ya no se puede volver a poner a cero.
-- **Xiaomi**: con la herramienta *Mi Flash* y la ROM oficial del Redmi 9A.
+Con Odin o Heimdall, usando el firmware original de tu modelo, que puedes
+buscar en [SamMobile](https://www.sammobile.com/). El contador KNOX ya no se
+puede volver a poner a cero.
 
 ---
 
-## 6. Qué esperar de postmarketOS
+## 5. Qué esperar de postmarketOS
 
 - **Sistema:** postmarketOS (canal `edge`), basado en Alpine Linux
 - **Escritorio:** Phosh (la interfaz táctil de GNOME para móviles)
@@ -146,11 +125,10 @@ usarlo como teléfono normal. Lo que funciona en cada uno, actualizado:
 
 - https://wiki.postmarketos.org/wiki/Samsung_Galaxy_S6_(samsung-zeroflte)
 - https://wiki.postmarketos.org/wiki/Samsung_Galaxy_J5_2017_(samsung-j5y17lte)
-- https://wiki.postmarketos.org/wiki/Xiaomi_Redmi_9A_(xiaomi-dandelion)
 
 ---
 
-## 7. Volver a construir las imágenes
+## 6. Volver a construir las imágenes
 
 Pestaña **Actions** → *Construir imagenes de postmarketOS* → botón
-**Run workflow**. Construye los tres móviles a la vez.
+**Run workflow**. Construye los dos móviles a la vez.
