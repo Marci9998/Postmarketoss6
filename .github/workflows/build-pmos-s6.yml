@@ -191,69 +191,51 @@ jobs:
         run: |
           set +e
           set -x
-          intentar() {
-            # Distintas versiones aceptan distintos parametros: de mas a menos.
-            for extra in "--split --filesystem ext4" "--split" ""; do
-              echo ">>> intentando: pmbootstrap install $extra"
-              # shellcheck disable=SC2086
-              pmbootstrap --details-to-stdout install $extra \
-                --password "$PMOS_PASSWORD" < "$ENTERS"
-              if [ $? -eq 0 ]; then
-                return 0
-              fi
-              echo ">>> fallo con: $extra"
-            done
-            return 1
-          }
 
           WORK="$(pmbootstrap config work | tr -d '[:space:]')"
           [ -d "$WORK" ] || WORK="$HOME/.local/var/pmbootstrap"
+          APORTS="$(pmbootstrap config aports | tr -d '[:space:]')"
+          [ -d "$APORTS" ] || APORTS="$WORK/cache_git/pmaports"
 
-          # Estos moviles declaran un paquete de firmware privativo
-          # (p.ej. firmware-samsung-zero) que no existe en los repositorios de
-          # postmarketOS, y eso rompe la instalacion. Se prueban tres salidas.
-          paquete_que_falta() {
-            grep -oE '[a-z0-9._+-]+ \(no such package\)' "$WORK/log.txt" 2>/dev/null \
-              | tail -1 | awk '{print $1}'
+          # Cada version de pmbootstrap acepta unos parametros distintos:
+          # se miran en la ayuda en vez de adivinarlos.
+          EXTRA=""
+          AYUDA="$(pmbootstrap install --help 2>&1)"
+          echo "$AYUDA" | grep -q -- '--split' && EXTRA="$EXTRA --split"
+          echo "$AYUDA" | grep -q -- '--filesystem' && EXTRA="$EXTRA --filesystem ext4"
+          echo "parametros elegidos: $EXTRA"
+
+          intentar() {
+            # shellcheck disable=SC2086
+            pmbootstrap --details-to-stdout install $EXTRA \
+              --password "$PMOS_PASSWORD" < "$ENTERS"
+          }
+
+          diagnostico() {
+            echo "=== ultimas lineas del log de pmbootstrap ==="
+            tail -n 30 "$WORK/log.txt" 2>/dev/null \
+              || sudo tail -n 30 "$WORK/log.txt" 2>/dev/null \
+              || echo "(no se pudo leer el log)"
           }
 
           ok=0
           intentar && ok=1
 
-          FALTA=""
+          # Varios moviles declaran un paquete de firmware privativo
+          # (firmware-samsung-zero, firmware-samsung-j5y17lte...) que no existe
+          # en ningun repositorio de postmarketOS, y apk aborta al resolver
+          # dependencias. Se quita esa dependencia rota de la receta y se sube
+          # pkgrel para que se use la receta parcheada en vez del paquete ya
+          # publicado.
           if [ "$ok" -ne 1 ]; then
-            FALTA="$(paquete_que_falta)"
-            echo ">>> paquete que falta: '$FALTA'"
-          fi
-
-          # Salida 1: construir a mano el paquete que falta (lo mejor: conserva
-          # el firmware, asi que el wifi puede funcionar).
-          if [ "$ok" -ne 1 ] && [ -n "$FALTA" ]; then
-            echo ">>> salida 1: construir $FALTA a mano"
-            if pmbootstrap --details-to-stdout build "$FALTA"; then
-              intentar && ok=1
-            fi
-          fi
-
-          # Salida 2: desactivar el firmware privativo en la configuracion.
-          if [ "$ok" -ne 1 ]; then
-            echo ">>> salida 2: desactivar el firmware privativo"
-            pmbootstrap config nonfree_firmware False
-            pmbootstrap config nonfree_userland False
-            pmbootstrap config
-            intentar && ok=1
-          fi
-
-          # Salida 3: quitar la dependencia rota de la receta del dispositivo.
-          if [ "$ok" -ne 1 ] && [ -n "$FALTA" ]; then
-            echo ">>> salida 3: quitar '$FALTA' de la receta del dispositivo"
-            APORTS="$(pmbootstrap config aports | tr -d '[:space:]')"
-            [ -d "$APORTS" ] || APORTS="$WORK/cache_git/pmaports"
+            diagnostico
             APKBUILD="$(find "$APORTS/device" -maxdepth 3 -path "*device-$PMOS_DEVICE/APKBUILD" | head -1)"
-            echo "receta: $APKBUILD"
+            echo "receta del dispositivo: $APKBUILD"
             if [ -n "$APKBUILD" ]; then
               cp "$APKBUILD" /tmp/APKBUILD.orig
-              sed -i "s/${FALTA}//g" "$APKBUILD"
+              sed -i -E 's/^([[:space:]]*)depends="firmware-[^"]*"/\1depends=""/' "$APKBUILD"
+              sed -i -E 's/^pkgrel=[0-9]+/pkgrel=99/' "$APKBUILD"
+              echo "=== cambios en la receta ==="
               diff -u /tmp/APKBUILD.orig "$APKBUILD"
               intentar && ok=1
             fi
@@ -261,7 +243,8 @@ jobs:
 
           df -h
           if [ "$ok" -ne 1 ]; then
-            echo "ERROR: pmbootstrap install fallo con todas las variantes"
+            diagnostico
+            echo "ERROR: no se pudo construir la imagen"
             exit 1
           fi
 
