@@ -71,10 +71,25 @@ jobs:
 
       - name: Instalar pmbootstrap
         run: |
-          set -euo pipefail
-          python3 -m pip install --user --upgrade pip
-          python3 -m pip install --user pmbootstrap
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          set -euxo pipefail
+          # pmbootstrap ya no se publica en PyPI: se instala desde su git oficial
+          SRC="$HOME/pmbootstrap-src"
+          git clone --depth=1 https://gitlab.postmarketos.org/postmarketOS/pmbootstrap.git "$SRC" \
+            || git clone --depth=1 https://github.com/postmarketOS/pmbootstrap.git "$SRC"
+          git -C "$SRC" log --oneline -1
+
+          python3 -m venv "$HOME/pmb-venv"
+          "$HOME/pmb-venv/bin/python" -m pip install --upgrade pip setuptools wheel
+
+          if "$HOME/pmb-venv/bin/python" -m pip install "$SRC"; then
+            echo "$HOME/pmb-venv/bin" >> "$GITHUB_PATH"
+          else
+            echo "pip install fallo; se usa el script pmbootstrap.py directamente"
+            mkdir -p "$HOME/bin"
+            printf '#!/bin/sh\nexec %s/pmbootstrap.py "$@"\n' "$SRC" > "$HOME/bin/pmbootstrap"
+            chmod +x "$HOME/bin/pmbootstrap"
+            echo "$HOME/bin" >> "$GITHUB_PATH"
+          fi
 
       - name: Comprobar pmbootstrap
         run: |
