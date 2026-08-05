@@ -206,21 +206,59 @@ jobs:
             return 1
           }
 
+          WORK="$(pmbootstrap config work | tr -d '[:space:]')"
+          [ -d "$WORK" ] || WORK="$HOME/.local/var/pmbootstrap"
+
+          # Estos moviles declaran un paquete de firmware privativo
+          # (p.ej. firmware-samsung-zero) que no existe en los repositorios de
+          # postmarketOS, y eso rompe la instalacion. Se prueban tres salidas.
+          paquete_que_falta() {
+            grep -oE '[a-z0-9._+-]+ \(no such package\)' "$WORK/log.txt" 2>/dev/null \
+              | tail -1 | awk '{print $1}'
+          }
+
           ok=0
-          if intentar; then
-            ok=1
-          else
-            # Algunos moviles (p.ej. el Galaxy J5 2017) declaran un paquete de
-            # firmware privativo que no existe en los repositorios, y eso rompe
-            # la instalacion. Se reintenta sin firmware privativo.
-            echo ">>> reintento sin firmware privativo"
-            pmbootstrap config nonfree_firmware False || true
-            pmbootstrap config nonfree_userland False || true
-            pmbootstrap config
-            if intentar; then
-              ok=1
+          intentar && ok=1
+
+          FALTA=""
+          if [ "$ok" -ne 1 ]; then
+            FALTA="$(paquete_que_falta)"
+            echo ">>> paquete que falta: '$FALTA'"
+          fi
+
+          # Salida 1: construir a mano el paquete que falta (lo mejor: conserva
+          # el firmware, asi que el wifi puede funcionar).
+          if [ "$ok" -ne 1 ] && [ -n "$FALTA" ]; then
+            echo ">>> salida 1: construir $FALTA a mano"
+            if pmbootstrap --details-to-stdout build "$FALTA"; then
+              intentar && ok=1
             fi
           fi
+
+          # Salida 2: desactivar el firmware privativo en la configuracion.
+          if [ "$ok" -ne 1 ]; then
+            echo ">>> salida 2: desactivar el firmware privativo"
+            pmbootstrap config nonfree_firmware False
+            pmbootstrap config nonfree_userland False
+            pmbootstrap config
+            intentar && ok=1
+          fi
+
+          # Salida 3: quitar la dependencia rota de la receta del dispositivo.
+          if [ "$ok" -ne 1 ] && [ -n "$FALTA" ]; then
+            echo ">>> salida 3: quitar '$FALTA' de la receta del dispositivo"
+            APORTS="$(pmbootstrap config aports | tr -d '[:space:]')"
+            [ -d "$APORTS" ] || APORTS="$WORK/cache_git/pmaports"
+            APKBUILD="$(find "$APORTS/device" -maxdepth 3 -path "*device-$PMOS_DEVICE/APKBUILD" | head -1)"
+            echo "receta: $APKBUILD"
+            if [ -n "$APKBUILD" ]; then
+              cp "$APKBUILD" /tmp/APKBUILD.orig
+              sed -i "s/${FALTA}//g" "$APKBUILD"
+              diff -u /tmp/APKBUILD.orig "$APKBUILD"
+              intentar && ok=1
+            fi
+          fi
+
           df -h
           if [ "$ok" -ne 1 ]; then
             echo "ERROR: pmbootstrap install fallo con todas las variantes"
