@@ -11,13 +11,9 @@ on:
         required: false
         default: "samsung-zeroflte"
       ui:
-        description: "Interfaz grafica (phosh, plasma-mobile, sxmo, none)"
+        description: "Interfaz grafica (phosh, plasma-mobile, sxmo-de-sway, console)"
         required: false
         default: "phosh"
-      channel:
-        description: "Canal de postmarketOS (edge o v24.12 etc.)"
-        required: false
-        default: "edge"
 
 permissions:
   contents: write
@@ -30,10 +26,10 @@ jobs:
     env:
       PMOS_DEVICE: ${{ github.event.inputs.device || 'samsung-zeroflte' }}
       PMOS_UI: ${{ github.event.inputs.ui || 'phosh' }}
-      PMOS_CHANNEL: ${{ github.event.inputs.channel || 'edge' }}
       PMOS_USER: usuario
       PMOS_PASSWORD: "147147"
       PMB_WORK: /mnt/pmbootstrap
+      ENTERS: /tmp/enters.txt
 
     steps:
       - name: Descargar el repositorio
@@ -55,10 +51,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             git openssl procps util-linux coreutils xz-utils zstd \
-            python3 python3-pip python3-venv android-sdk-libsparse-utils || \
-          sudo apt-get install -y --no-install-recommends \
-            git openssl procps util-linux coreutils xz-utils zstd \
-            python3 python3-pip python3-venv
+            python3 python3-venv
 
       - name: Preparar binfmt_misc (emulacion aarch64)
         run: |
@@ -91,70 +84,80 @@ jobs:
             echo "$HOME/bin" >> "$GITHUB_PATH"
           fi
 
-      - name: Comprobar pmbootstrap
+      - name: Preparar directorio de trabajo y respuestas automaticas
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           pmbootstrap --version
-          nproc
-          df -h
-
-      - name: Crear directorio de trabajo en el disco grande
-        run: |
-          set -euo pipefail
           sudo mkdir -p "$PMB_WORK"
           sudo chown -R "$USER":"$USER" "$PMB_WORK"
-          df -h /mnt
+          df -h /mnt /
+          # pmbootstrap init es interactivo. En vez de canalizar 'yes' (que muere
+          # con SIGPIPE y hace fallar el paso), le damos un fichero con muchas
+          # lineas vacias: cada una equivale a pulsar ENTER y aceptar el defecto.
+          python3 -c "open('$ENTERS','w').write('\n'*2000)"
+          wc -l "$ENTERS"
 
-      - name: Configurar pmbootstrap (sin preguntas)
+      - name: Primera inicializacion (crea la configuracion y clona pmaports)
         run: |
-          set -euxo pipefail
-          set_cfg() {
-            pmbootstrap config "$1" "$2" || echo "aviso: no se pudo fijar $1"
-          }
-          set_cfg work "$PMB_WORK"
-          set_cfg channel "$PMOS_CHANNEL"
-          set_cfg device "$PMOS_DEVICE"
-          set_cfg ui "$PMOS_UI"
-          set_cfg user "$PMOS_USER"
-          set_cfg hostname "galaxys6"
-          set_cfg timezone "Europe/Madrid"
-          set_cfg jobs "$(nproc)"
-          set_cfg is_default_channel False
-          set_cfg build_default_device_arch True
-          set_cfg ccache_size 0
-          pmbootstrap config || true
-
-      - name: Inicializar pmbootstrap (aceptando valores por defecto)
-        run: |
-          set -uxo pipefail
-          # 'pmbootstrap init' es interactivo: le mandamos ENTER a todo, de modo
-          # que use los valores que ya dejamos escritos en la configuracion.
-          yes '' | timeout 3000 pmbootstrap --details-to-stdout init
-          rc=$?
-          echo "codigo de salida de init: $rc"
+          set +e
+          set -x
+          pmbootstrap config work "$PMB_WORK"
+          pmbootstrap config jobs "$(nproc)"
+          pmbootstrap --details-to-stdout init < "$ENTERS"
+          echo "codigo de salida de init: $?"
           pmbootstrap config
-          if [ "$rc" -ne 0 ]; then
-            echo "init devolvio error, se intenta continuar de todas formas"
-          fi
+          exit 0
 
-      - name: Verificar configuracion final
+      - name: Seleccionar Galaxy S6 e interfaz grafica
+        run: |
+          set +e
+          set -x
+          pmbootstrap config device "$PMOS_DEVICE"
+          pmbootstrap config ui "$PMOS_UI"
+          pmbootstrap config user "$PMOS_USER"
+          pmbootstrap config hostname "galaxys6"
+          echo "--- fichero de configuracion ---"
+          cat "$HOME/.config/pmbootstrap_v3.cfg" 2>/dev/null \
+            || cat "$HOME/.config/pmbootstrap.cfg" 2>/dev/null
+          exit 0
+
+      - name: Segunda inicializacion (aplica el dispositivo elegido)
+        run: |
+          set +e
+          set -x
+          pmbootstrap --details-to-stdout init < "$ENTERS"
+          echo "codigo de salida de init: $?"
+          pmbootstrap config
+          exit 0
+
+      - name: Comprobar que la configuracion es la correcta
         run: |
           set -euxo pipefail
-          pmbootstrap config device
-          pmbootstrap config ui
-          pmbootstrap config work
+          DEV="$(pmbootstrap config device | tr -d '[:space:]')"
+          GOT_UI="$(pmbootstrap config ui | tr -d '[:space:]')"
+          echo "dispositivo configurado: $DEV"
+          echo "interfaz configurada: $GOT_UI"
+          if [ "$DEV" != "$PMOS_DEVICE" ]; then
+            echo "ERROR: se esperaba $PMOS_DEVICE pero la configuracion dice $DEV"
+            exit 1
+          fi
+          if [ "$GOT_UI" != "$PMOS_UI" ]; then
+            echo "ERROR: se esperaba la interfaz $PMOS_UI pero hay $GOT_UI"
+            exit 1
+          fi
 
       - name: Construir la imagen
         run: |
-          set -uxo pipefail
-          # Distintas versiones de pmbootstrap aceptan distintos parametros,
-          # asi que probamos de mas completo a mas simple.
+          set +e
+          set -x
+          # Distintas versiones aceptan distintos parametros: de mas a menos.
           ok=0
           for extra in "--split --filesystem ext4" "--split" ""; do
             echo ">>> intentando: pmbootstrap install $extra"
             # shellcheck disable=SC2086
-            if yes '' | pmbootstrap --details-to-stdout install $extra \
-                 --password "$PMOS_PASSWORD"; then
+            pmbootstrap --details-to-stdout install $extra \
+              --password "$PMOS_PASSWORD" < "$ENTERS"
+            if [ $? -eq 0 ]; then
               ok=1
               break
             fi
@@ -166,21 +169,14 @@ jobs:
             exit 1
           fi
 
-      - name: Localizar y exportar las imagenes
-        id: exportar
+      - name: Localizar las imagenes generadas
         run: |
           set -euxo pipefail
           OUT="$GITHUB_WORKSPACE/salida"
           mkdir -p "$OUT"
-
-          ROOTFS_DIR="$PMB_WORK/chroot_native/home/pmos/rootfs"
-          sudo ls -la "$ROOTFS_DIR" || true
-
-          # Copiamos cualquier .img generado para este dispositivo
           sudo find "$PMB_WORK/chroot_native/home/pmos/rootfs" -maxdepth 1 \
-            -name "*.img" -exec cp -v {} "$OUT"/ \;
+            -name "*.img" -print -exec cp -v {} "$OUT"/ \;
           sudo chown -R "$USER":"$USER" "$OUT"
-
           ls -lh "$OUT"
           if [ -z "$(ls -A "$OUT")" ]; then
             echo "ERROR: no se genero ninguna imagen"
@@ -197,9 +193,7 @@ jobs:
             xz -T0 -3 -v "$f"
           done
           ls -lh
-
-          # Los ficheros de una release de GitHub no pueden superar 2 GiB:
-          # si alguno se pasa, se parte en trozos .part-aa, .part-ab, ...
+          # Un fichero de release no puede superar 2 GiB: si se pasa, se parte.
           for f in *.img.xz; do
             size=$(stat -c%s "$f")
             if [ "$size" -gt 1900000000 ]; then
@@ -230,7 +224,6 @@ jobs:
 
           Dispositivo: ${PMOS_DEVICE}
           Interfaz: ${PMOS_UI}
-          Canal: ${PMOS_CHANNEL}
           Usuario: ${PMOS_USER}
           Contrasena: ${PMOS_PASSWORD}
 
