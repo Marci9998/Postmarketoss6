@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - "claude/postmarketos-galaxy-s6-img-y9u65z"
+    paths-ignore:
+      - "README.md"
   workflow_dispatch:
 
 permissions:

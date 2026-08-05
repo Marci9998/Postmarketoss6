@@ -5,7 +5,7 @@ estos móviles y las deja listas para descargar:
 
 | Móvil | Modelo | Nombre en postmarketOS |
 |---|---|---|
-| Samsung Galaxy S6 | SM-G920F | `samsung-zeroflte` |
+| Samsung Galaxy S6 | SM-G920F | `samsung-zerofltexx` |
 | Samsung Galaxy J5 (2017) | SM-J530F/DS | `samsung-j5y17lte` |
 
 > **Xiaomi Redmi 9A / 9AT: no se puede.** postmarketOS no tiene soporte para
@@ -25,7 +25,9 @@ Cuando una construcción termina, los ficheros aparecen en dos sitios:
 
 - **Releases** → https://github.com/Marci9998/Postmarketoss6/releases
   (la forma más fácil: se descarga desde el navegador). Hay una release por
-  móvil, con el nombre del móvil en el título.
+  móvil, con el nombre del móvil en el título. Enlaces directos a las últimas:
+  - Galaxy S6: https://github.com/Marci9998/Postmarketoss6/releases/tag/pmos-samsung-zerofltexx-9
+  - Galaxy J5 2017: https://github.com/Marci9998/Postmarketoss6/releases/tag/pmos-samsung-j5y17lte-9
 - **Actions** → pestaña *Actions*, entras en la construcción y abajo del todo,
   en *Artifacts*, hay un `.zip` con todo dentro.
 
@@ -86,7 +88,7 @@ Los dos Samsung se instalan igual, con un programa gratuito llamado
    ya descomprimidos). Para el Galaxy S6:
 
    ```bash
-   heimdall flash --BOOT samsung-zeroflte-boot.img --USERDATA samsung-zeroflte-root.img
+   heimdall flash --BOOT samsung-zerofltexx-boot.img --USERDATA samsung-zerofltexx-root.img
    ```
 
    Para el Galaxy J5 2017:
@@ -123,7 +125,7 @@ bluetooth, aceleración gráfica) pueden fallar según el modelo.
 Es un Linux de escritorio metido en el móvil, no un sustituto de Android para
 usarlo como teléfono normal. Lo que funciona en cada uno, actualizado:
 
-- https://wiki.postmarketos.org/wiki/Samsung_Galaxy_S6_(samsung-zeroflte)
+- https://wiki.postmarketos.org/wiki/Samsung_Galaxy_S6_(samsung-zerofltexx)
 - https://wiki.postmarketos.org/wiki/Samsung_Galaxy_J5_2017_(samsung-j5y17lte)
 
 ---
