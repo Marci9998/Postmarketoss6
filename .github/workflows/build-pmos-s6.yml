@@ -1,0 +1,224 @@
+name: Construir imagen postmarketOS (Samsung Galaxy S6)
+
+on:
+  push:
+    branches:
+      - "claude/postmarketos-galaxy-s6-img-y9u65z"
+  workflow_dispatch:
+    inputs:
+      device:
+        description: "Codename del dispositivo en postmarketOS"
+        required: false
+        default: "samsung-zeroflte"
+      ui:
+        description: "Interfaz grafica (phosh, plasma-mobile, sxmo, none)"
+        required: false
+        default: "phosh"
+      channel:
+        description: "Canal de postmarketOS (edge o v24.12 etc.)"
+        required: false
+        default: "edge"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 340
+
+    env:
+      PMOS_DEVICE: ${{ github.event.inputs.device || 'samsung-zeroflte' }}
+      PMOS_UI: ${{ github.event.inputs.ui || 'phosh' }}
+      PMOS_CHANNEL: ${{ github.event.inputs.channel || 'edge' }}
+      PMOS_USER: usuario
+      PMOS_PASSWORD: "147147"
+      PMB_WORK: /mnt/pmbootstrap
+
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v4
+
+      - name: Liberar espacio en disco
+        run: |
+          set -x
+          df -h
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" \
+                      /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true
+          sudo docker image prune --all --force || true
+          df -h
+
+      - name: Instalar dependencias del sistema
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            git openssl procps util-linux coreutils xz-utils zstd \
+            python3 python3-pip python3-venv android-sdk-libsparse-utils || \
+          sudo apt-get install -y --no-install-recommends \
+            git openssl procps util-linux coreutils xz-utils zstd \
+            python3 python3-pip python3-venv
+
+      - name: Preparar binfmt_misc (emulacion aarch64)
+        run: |
+          set -x
+          if [ ! -e /proc/sys/fs/binfmt_misc/register ]; then
+            sudo modprobe binfmt_misc || true
+            sudo mount -t binfmt_misc none /proc/sys/fs/binfmt_misc || true
+          fi
+          ls -la /proc/sys/fs/binfmt_misc || true
+
+      - name: Instalar pmbootstrap
+        run: |
+          set -euo pipefail
+          python3 -m pip install --user --upgrade pip
+          python3 -m pip install --user pmbootstrap
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Comprobar pmbootstrap
+        run: |
+          set -euo pipefail
+          pmbootstrap --version
+          nproc
+          df -h
+
+      - name: Crear directorio de trabajo en el disco grande
+        run: |
+          set -euo pipefail
+          sudo mkdir -p "$PMB_WORK"
+          sudo chown -R "$USER":"$USER" "$PMB_WORK"
+          df -h /mnt
+
+      - name: Configurar pmbootstrap (sin preguntas)
+        run: |
+          set -euxo pipefail
+          set_cfg() {
+            pmbootstrap config "$1" "$2" || echo "aviso: no se pudo fijar $1"
+          }
+          set_cfg work "$PMB_WORK"
+          set_cfg channel "$PMOS_CHANNEL"
+          set_cfg device "$PMOS_DEVICE"
+          set_cfg ui "$PMOS_UI"
+          set_cfg user "$PMOS_USER"
+          set_cfg hostname "galaxys6"
+          set_cfg timezone "Europe/Madrid"
+          set_cfg jobs "$(nproc)"
+          set_cfg is_default_channel False
+          set_cfg build_default_device_arch True
+          set_cfg ccache_size 0
+          pmbootstrap config || true
+
+      - name: Inicializar pmbootstrap (aceptando valores por defecto)
+        run: |
+          set -uxo pipefail
+          # 'pmbootstrap init' es interactivo: le mandamos ENTER a todo, de modo
+          # que use los valores que ya dejamos escritos en la configuracion.
+          yes '' | timeout 3000 pmbootstrap --details-to-stdout init
+          rc=$?
+          echo "codigo de salida de init: $rc"
+          pmbootstrap config
+          if [ "$rc" -ne 0 ]; then
+            echo "init devolvio error, se intenta continuar de todas formas"
+          fi
+
+      - name: Verificar configuracion final
+        run: |
+          set -euxo pipefail
+          pmbootstrap config device
+          pmbootstrap config ui
+          pmbootstrap config work
+
+      - name: Construir la imagen
+        run: |
+          set -uxo pipefail
+          # Distintas versiones de pmbootstrap aceptan distintos parametros,
+          # asi que probamos de mas completo a mas simple.
+          ok=0
+          for extra in "--split --filesystem ext4" "--split" ""; do
+            echo ">>> intentando: pmbootstrap install $extra"
+            # shellcheck disable=SC2086
+            if yes '' | pmbootstrap --details-to-stdout install $extra \
+                 --password "$PMOS_PASSWORD"; then
+              ok=1
+              break
+            fi
+            echo ">>> fallo con: $extra"
+          done
+          df -h
+          if [ "$ok" -ne 1 ]; then
+            echo "ERROR: pmbootstrap install fallo con todas las variantes"
+            exit 1
+          fi
+
+      - name: Localizar y exportar las imagenes
+        id: exportar
+        run: |
+          set -euxo pipefail
+          OUT="$GITHUB_WORKSPACE/salida"
+          mkdir -p "$OUT"
+
+          ROOTFS_DIR="$PMB_WORK/chroot_native/home/pmos/rootfs"
+          sudo ls -la "$ROOTFS_DIR" || true
+
+          # Copiamos cualquier .img generado para este dispositivo
+          sudo find "$PMB_WORK/chroot_native/home/pmos/rootfs" -maxdepth 1 \
+            -name "*.img" -exec cp -v {} "$OUT"/ \;
+          sudo chown -R "$USER":"$USER" "$OUT"
+
+          ls -lh "$OUT"
+          if [ -z "$(ls -A "$OUT")" ]; then
+            echo "ERROR: no se genero ninguna imagen"
+            exit 1
+          fi
+
+      - name: Comprimir las imagenes
+        run: |
+          set -euxo pipefail
+          OUT="$GITHUB_WORKSPACE/salida"
+          cd "$OUT"
+          sha256sum *.img > SHA256SUMS.txt
+          for f in *.img; do
+            xz -T0 -3 -v "$f"
+          done
+          ls -lh
+
+          # Los ficheros de una release de GitHub no pueden superar 2 GiB:
+          # si alguno se pasa, se parte en trozos .part-aa, .part-ab, ...
+          for f in *.img.xz; do
+            size=$(stat -c%s "$f")
+            if [ "$size" -gt 1900000000 ]; then
+              split -b 1900M -d --additional-suffix=".part" "$f" "$f.part-"
+              rm -f "$f"
+            fi
+          done
+          ls -lh
+
+      - name: Subir como artefacto del workflow
+        uses: actions/upload-artifact@v4
+        with:
+          name: postmarketos-${{ env.PMOS_DEVICE }}-${{ env.PMOS_UI }}
+          path: salida/*
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Publicar release descargable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          TAG="pmos-${PMOS_DEVICE}-${{ github.run_number }}"
+          gh release create "$TAG" \
+            --repo "${{ github.repository }}" \
+            --title "postmarketOS ${PMOS_UI} para ${PMOS_DEVICE} (build ${{ github.run_number }})" \
+            --notes "Imagenes de postmarketOS generadas automaticamente.
+
+          Dispositivo: ${PMOS_DEVICE}
+          Interfaz: ${PMOS_UI}
+          Canal: ${PMOS_CHANNEL}
+          Usuario: ${PMOS_USER}
+          Contrasena: ${PMOS_PASSWORD}
+
+          Descomprime los ficheros .xz antes de flashear.
+          Instrucciones completas en el README del repositorio." \
+            salida/*
