@@ -108,6 +108,42 @@ jobs:
           pmbootstrap config
           exit 0
 
+      - name: Detectar el nombre del Galaxy S6 en postmarketOS
+        run: |
+          set -euxo pipefail
+          APORTS="$(pmbootstrap config aports 2>/dev/null | tr -d '[:space:]' || true)"
+          if [ ! -d "$APORTS" ]; then
+            APORTS="$HOME/.local/var/pmbootstrap/cache_git/pmaports"
+          fi
+          echo "pmaports en: $APORTS"
+          git -C "$APORTS" log --oneline -1 || true
+          git -C "$APORTS" status -sb | head -3 || true
+
+          echo "=== dispositivos Samsung disponibles ==="
+          find "$APORTS/device" -maxdepth 2 -type d -name 'device-samsung-*' -printf '%f\n' \
+            | sed 's/^device-//' | sort | tee /tmp/samsung.txt
+          wc -l /tmp/samsung.txt
+
+          echo "=== rastro historico de zeroflte (por si lo renombraron) ==="
+          git -C "$APORTS" log --oneline --all -- '*zeroflte*' | head -10 || true
+
+          DEV=""
+          if grep -qx "$PMOS_DEVICE" /tmp/samsung.txt; then
+            DEV="$PMOS_DEVICE"
+          elif grep -qE '^samsung-zeroflte' /tmp/samsung.txt; then
+            DEV="$(grep -E '^samsung-zeroflte' /tmp/samsung.txt | head -1)"
+          elif grep -qE '^samsung-zero' /tmp/samsung.txt; then
+            DEV="$(grep -E '^samsung-zero' /tmp/samsung.txt | head -1)"
+          fi
+
+          if [ -z "$DEV" ]; then
+            echo "ERROR: no hay ningun puerto del Galaxy S6 en esta version de pmaports."
+            echo "Lista completa de dispositivos Samsung mostrada arriba."
+            exit 1
+          fi
+          echo "dispositivo elegido: $DEV"
+          echo "PMOS_DEVICE=$DEV" >> "$GITHUB_ENV"
+
       - name: Seleccionar Galaxy S6 e interfaz grafica
         run: |
           set +e
@@ -174,7 +210,12 @@ jobs:
           set -euxo pipefail
           OUT="$GITHUB_WORKSPACE/salida"
           mkdir -p "$OUT"
-          sudo find "$PMB_WORK/chroot_native/home/pmos/rootfs" -maxdepth 1 \
+          WORK="$(pmbootstrap config work | tr -d '[:space:]')"
+          if [ ! -d "$WORK" ]; then
+            WORK="$HOME/.local/var/pmbootstrap"
+          fi
+          echo "directorio de trabajo: $WORK"
+          sudo find "$WORK/chroot_native/home/pmos/rootfs" -maxdepth 1 \
             -name "*.img" -print -exec cp -v {} "$OUT"/ \;
           sudo chown -R "$USER":"$USER" "$OUT"
           ls -lh "$OUT"
