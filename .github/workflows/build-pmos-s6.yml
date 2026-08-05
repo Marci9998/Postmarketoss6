@@ -1,19 +1,10 @@
-name: Construir imagen postmarketOS (Samsung Galaxy S6)
+name: Construir imagenes de postmarketOS
 
 on:
   push:
     branches:
       - "claude/postmarketos-galaxy-s6-img-y9u65z"
   workflow_dispatch:
-    inputs:
-      device:
-        description: "Codename del dispositivo en postmarketOS"
-        required: false
-        default: "samsung-zeroflte"
-      ui:
-        description: "Interfaz grafica (phosh, plasma-mobile, sxmo-de-sway, console)"
-        required: false
-        default: "phosh"
 
 permissions:
   contents: write
@@ -23,12 +14,35 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 340
 
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - nombre: "Samsung Galaxy S6 (SM-G920F)"
+            device: "samsung-zeroflte"
+            patrones: "^samsung-zeroflte$ ^samsung-zeroflte ^samsung-zero"
+            ui: "phosh"
+            hostname: "galaxys6"
+          - nombre: "Samsung Galaxy J5 2017 (SM-J530F/DS)"
+            device: "samsung-j5y17lte"
+            patrones: "^samsung-j5y17lte$ ^samsung-j5y17 ^samsung-j5.*17"
+            ui: "phosh"
+            hostname: "galaxyj5"
+          - nombre: "Xiaomi Redmi 9A / 9AT"
+            device: "xiaomi-dandelion"
+            patrones: "^xiaomi-dandelion$ ^xiaomi-dandelion ^xiaomi-angelica"
+            ui: "phosh"
+            hostname: "redmi9a"
+
+    name: ${{ matrix.nombre }}
+
     env:
-      PMOS_DEVICE: ${{ github.event.inputs.device || 'samsung-zeroflte' }}
-      PMOS_UI: ${{ github.event.inputs.ui || 'phosh' }}
+      PMOS_DEVICE: ${{ matrix.device }}
+      PMOS_PATRONES: ${{ matrix.patrones }}
+      PMOS_UI: ${{ matrix.ui }}
+      PMOS_HOSTNAME: ${{ matrix.hostname }}
       PMOS_USER: usuario
       PMOS_PASSWORD: "147147"
-      PMB_WORK: /mnt/pmbootstrap
       ENTERS: /tmp/enters.txt
 
     steps:
@@ -53,7 +67,7 @@ jobs:
             git openssl procps util-linux coreutils xz-utils zstd \
             python3 python3-venv
 
-      - name: Preparar binfmt_misc (emulacion aarch64)
+      - name: Preparar binfmt_misc (emulacion de otras arquitecturas)
         run: |
           set -x
           if [ ! -e /proc/sys/fs/binfmt_misc/register ]; then
@@ -84,31 +98,27 @@ jobs:
             echo "$HOME/bin" >> "$GITHUB_PATH"
           fi
 
-      - name: Preparar directorio de trabajo y respuestas automaticas
+      - name: Preparar respuestas automaticas
         run: |
           set -euxo pipefail
           pmbootstrap --version
-          sudo mkdir -p "$PMB_WORK"
-          sudo chown -R "$USER":"$USER" "$PMB_WORK"
-          df -h /mnt /
+          df -h /
           # pmbootstrap init es interactivo. En vez de canalizar 'yes' (que muere
           # con SIGPIPE y hace fallar el paso), le damos un fichero con muchas
           # lineas vacias: cada una equivale a pulsar ENTER y aceptar el defecto.
           python3 -c "open('$ENTERS','w').write('\n'*2000)"
-          wc -l "$ENTERS"
 
       - name: Primera inicializacion (crea la configuracion y clona pmaports)
         run: |
           set +e
           set -x
-          pmbootstrap config work "$PMB_WORK"
           pmbootstrap config jobs "$(nproc)"
           pmbootstrap --details-to-stdout init < "$ENTERS"
           echo "codigo de salida de init: $?"
           pmbootstrap config
           exit 0
 
-      - name: Detectar el nombre del Galaxy S6 en postmarketOS
+      - name: Detectar el nombre del dispositivo en postmarketOS
         run: |
           set -euxo pipefail
           APORTS="$(pmbootstrap config aports 2>/dev/null | tr -d '[:space:]' || true)"
@@ -117,44 +127,38 @@ jobs:
           fi
           echo "pmaports en: $APORTS"
           git -C "$APORTS" log --oneline -1 || true
-          git -C "$APORTS" status -sb | head -3 || true
 
-          echo "=== dispositivos Samsung disponibles ==="
-          find "$APORTS/device" -maxdepth 2 -type d -name 'device-samsung-*' -printf '%f\n' \
-            | sed 's/^device-//' | sort | tee /tmp/samsung.txt
-          wc -l /tmp/samsung.txt
-
-          echo "=== rastro historico de zeroflte (por si lo renombraron) ==="
-          git -C "$APORTS" log --oneline --all -- '*zeroflte*' | head -10 || true
+          VENDOR="${PMOS_DEVICE%%-*}"
+          echo "=== dispositivos de $VENDOR disponibles ==="
+          find "$APORTS/device" -maxdepth 2 -type d -name "device-$VENDOR-*" -printf '%f\n' \
+            | sed 's/^device-//' | sort | tee /tmp/candidatos.txt
+          wc -l /tmp/candidatos.txt
 
           DEV=""
-          if grep -qx "$PMOS_DEVICE" /tmp/samsung.txt; then
-            DEV="$PMOS_DEVICE"
-          elif grep -qE '^samsung-zeroflte' /tmp/samsung.txt; then
-            DEV="$(grep -E '^samsung-zeroflte' /tmp/samsung.txt | head -1)"
-          elif grep -qE '^samsung-zero' /tmp/samsung.txt; then
-            DEV="$(grep -E '^samsung-zero' /tmp/samsung.txt | head -1)"
-          fi
+          for pat in $PMOS_PATRONES; do
+            if grep -qE "$pat" /tmp/candidatos.txt; then
+              DEV="$(grep -E "$pat" /tmp/candidatos.txt | head -1)"
+              echo "coincidencia con el patron '$pat': $DEV"
+              break
+            fi
+          done
 
           if [ -z "$DEV" ]; then
-            echo "ERROR: no hay ningun puerto del Galaxy S6 en esta version de pmaports."
-            echo "Lista completa de dispositivos Samsung mostrada arriba."
+            echo "ERROR: no hay ningun puerto para $PMOS_DEVICE en esta version de pmaports."
+            echo "La lista completa de dispositivos de $VENDOR esta arriba."
             exit 1
           fi
           echo "dispositivo elegido: $DEV"
           echo "PMOS_DEVICE=$DEV" >> "$GITHUB_ENV"
 
-      - name: Seleccionar Galaxy S6 e interfaz grafica
+      - name: Seleccionar dispositivo e interfaz grafica
         run: |
           set +e
           set -x
           pmbootstrap config device "$PMOS_DEVICE"
           pmbootstrap config ui "$PMOS_UI"
           pmbootstrap config user "$PMOS_USER"
-          pmbootstrap config hostname "galaxys6"
-          echo "--- fichero de configuracion ---"
-          cat "$HOME/.config/pmbootstrap_v3.cfg" 2>/dev/null \
-            || cat "$HOME/.config/pmbootstrap.cfg" 2>/dev/null
+          pmbootstrap config hostname "$PMOS_HOSTNAME"
           exit 0
 
       - name: Segunda inicializacion (aplica el dispositivo elegido)
@@ -260,10 +264,11 @@ jobs:
           TAG="pmos-${PMOS_DEVICE}-${{ github.run_number }}"
           gh release create "$TAG" \
             --repo "${{ github.repository }}" \
-            --title "postmarketOS ${PMOS_UI} para ${PMOS_DEVICE} (build ${{ github.run_number }})" \
+            --title "postmarketOS ${PMOS_UI} para ${{ matrix.nombre }} (build ${{ github.run_number }})" \
             --notes "Imagenes de postmarketOS generadas automaticamente.
 
-          Dispositivo: ${PMOS_DEVICE}
+          Movil: ${{ matrix.nombre }}
+          Dispositivo en postmarketOS: ${PMOS_DEVICE}
           Interfaz: ${PMOS_UI}
           Usuario: ${PMOS_USER}
           Contrasena: ${PMOS_PASSWORD}
